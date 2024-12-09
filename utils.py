@@ -1041,10 +1041,10 @@ def perform_pca_and_calculate_scores(embed_generated_wild, returned_results, arg
 # Get the split and labels for unlabeled and test data
 def get_split_and_labels(args):
     if args.use_rouge:
-        gts = np.load(f'./ml_{args.dataset_name}_rouge_score.npy')
-        gts_bg = np.load(f'./bg_{args.dataset_name}_rouge_score.npy')
+        gts = np.load(f'{args.output_dir}/ml_{args.dataset_name}_rouge_score.npy')
+        gts_bg = np.load(f'{args.output_dir}/bg_{args.dataset_name}_rouge_score.npy')
     else:
-        gts = np.load(f'./ml_{args.dataset_name}_bleurt_score.npy')
+        gts = np.load(f'{args.output_dir}/ml_{args.dataset_name}_bleurt_score.npy')
     thres = args.thres_gt
     gt_label = np.asarray(gts > thres, dtype=np.int32)  # if gts > threshold, then this sample is considered as correct
     return gt_label
