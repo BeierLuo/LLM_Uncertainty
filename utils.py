@@ -25,9 +25,9 @@ from bleurt_pytorch import BleurtForSequenceClassification, BleurtTokenizer
 from sklearn.decomposition import PCA, IncrementalPCA
 import pdb
 
-from truthfulqa import utilities, models, metrics
+from TruthfulQA.truthfulqa import utilities, models, metrics
 import openai
-from truthfulqa.configs import BEST_COL, ANSWER_COL, INCORRECT_COL
+from TruthfulQA.truthfulqa.configs import BEST_COL, ANSWER_COL, INCORRECT_COL
 import copy
 
 ENGINE_MAP = {
