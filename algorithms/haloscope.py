@@ -27,7 +27,7 @@ class HaloScope(BaseEstimator):
             else:
                 info = 'batch_generations_'
             # print("Saving answers")
-            np.save(f'./save_for_eval/{args.dataset_name}_hal_det/answers/' + info + f'hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy',
+            np.save(f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/answers/' + info + f'hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy',
                     answers)
 
     def build_decoded_prompt(self, args, i, anw=None):
@@ -111,9 +111,9 @@ class HaloScope(BaseEstimator):
         for i in range(self.length):
             all_answers = self.get_ground_truth_answers(args, i)
             if args.most_likely:
-                file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
+                file_path = f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
             else:
-                file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/batch_generations_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
+                file_path = f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/answers/batch_generations_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
             answers = np.load(file_path, allow_pickle=True)
 
             if args.use_rouge:
@@ -126,10 +126,10 @@ class HaloScope(BaseEstimator):
             elif i % 10 == 0 and not args.use_rouge:
                 print("samples passed: ", i)
             
-        save_path = f'./ml_{args.dataset_name}_rouge_score.npy' if args.most_likely and args.use_rouge else \
-            f'./ml_{args.dataset_name}_bleurt_score.npy' if args.most_likely else \
-            f'./bg_{args.dataset_name}_rouge_score.npy' if args.use_rouge else \
-            f'./bg_{args.dataset_name}_bleurt_score.npy'
+        save_path = f'{args.output_dir}/ml_{args.dataset_name}_rouge_score.npy' if args.most_likely and args.use_rouge else \
+            f'{args.output_dir}/ml_{args.dataset_name}_bleurt_score.npy' if args.most_likely else \
+            f'{args.output_dir}/bg_{args.dataset_name}_rouge_score.npy' if args.use_rouge else \
+            f'{args.output_dir}/bg_{args.dataset_name}_bleurt_score.npy'
 
         np.save(save_path, gts)
 
@@ -145,7 +145,7 @@ class HaloScope(BaseEstimator):
         embed_generated_loc1 = []
 
         for i in tqdm(range(len(self.dataset) if args.dataset_name != 'tydiqa' else len(self.index_dict['used_indices'])), desc='Start Embedding Features'):
-            answers = np.load(f'save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
+            answers = np.load(f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
             for anw in answers:
                 prompt = self.build_decoded_prompt(args, i, anw)
                 with torch.no_grad():
@@ -165,14 +165,14 @@ class HaloScope(BaseEstimator):
                     embed_generated_loc2.append(mlp_wise_hidden_states[:, -1, :])
                     embed_generated_loc1.append(head_wise_hidden_states[:, -1, :])
         
-        self.save_embeddings(embed_generated, f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy')
-        self.save_embeddings(embed_generated_loc1, f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy')
-        self.save_embeddings(embed_generated_loc2, f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_embeddings_mlp_wise.npy')
+        self.save_embeddings(embed_generated, f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy')
+        self.save_embeddings(embed_generated_loc1, f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy')
+        self.save_embeddings(embed_generated_loc2, f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_embeddings_mlp_wise.npy')
     
     def estimate(self, args):
-        file_path1 = f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy'
-        file_path2 = f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy'
-        file_path3 = f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_embeddings_mlp_wise.npy'
+        file_path1 = f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy'
+        file_path2 = f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy'
+        file_path3 = f'{args.output_dir}/save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_embeddings_mlp_wise.npy'
 
         if not (os.path.exists(file_path1) and os.path.exists(file_path2) and os.path.exists(file_path3)):
             self.get_embeddings(args)
