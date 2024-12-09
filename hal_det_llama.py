@@ -38,7 +38,7 @@ HF_NAMES = {
     'honest_llama_7B': 'validation/results_dump/llama_7B_seed_42_top_48_heads_alpha_15',
     'alpaca_7B': 'circulus/alpaca-7b',
     'vicuna_7B': 'AlekseyKorshuk/vicuna-7b',
-    'llama2_chat_7B': 'models/Llama-2-7b-chat-hf',
+    'llama2_chat_7B': '/mnt/sharedata/ssd/common/LLMs/hub/Llama-2-7b-chat-hf',
     'llama2_chat_13B': 'models/Llama-2-13b-chat-hf',
     'llama2_chat_70B': 'meta-llama/Llama-2-70b-chat-hf',
 }
@@ -240,8 +240,8 @@ def main():
     elif args.generate_gt:
         from bleurt_pytorch import BleurtConfig, BleurtForSequenceClassification, BleurtTokenizer
 
-        model = BleurtForSequenceClassification.from_pretrained('./models/BLEURT-20').cuda()
-        tokenizer = BleurtTokenizer.from_pretrained('./models/BLEURT-20')
+        model = BleurtForSequenceClassification.from_pretrained('lucadiliello/BLEURT-20-D12').cuda()
+        tokenizer = BleurtTokenizer.from_pretrained('lucadiliello/BLEURT-20-D12')
         model.eval()
 
         rouge = evaluate.load('rouge')

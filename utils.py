@@ -20,6 +20,10 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from sklearn.linear_model import LogisticRegression
 import pickle
 from functools import partial
+from metric_utils import get_measures, print_measures
+from bleurt_pytorch import BleurtForSequenceClassification, BleurtTokenizer
+from sklearn.decomposition import PCA, IncrementalPCA
+import pdb
 
 from truthfulqa import utilities, models, metrics
 import openai
@@ -897,3 +901,329 @@ def get_com_directions(num_layers, num_heads, train_set_idxs, val_set_idxs, sepa
     com_directions = np.array(com_directions)
 
     return com_directions
+
+def get_index(args, dataset):
+    index = {}
+    begin_index = 0
+    if args.dataset_name == 'tydiqa':
+        used_indices = []
+        for i in range(len(dataset)):
+            if 'english' in dataset[i]['id']:
+                used_indices.append(i)
+        end_index = len(used_indices)
+        index['used_indices'] = used_indices
+    else:
+        end_index = len(dataset)
+    index['begin_index'] = begin_index
+    index['end_index'] = end_index
+    return index
+
+def seed_everything(seed: int):
+    import random, os
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+
+def svd_embed_score(embed_generated_wild, gt_label, begin_k, k_span, mean=1, svd=1, weight=0):
+    '''
+    Evaluate and compare the performance of different numbers of principal components 
+    (controlled by the parameter k) on the data after dimensionality reduction.
+    '''
+    embed_generated = embed_generated_wild
+    best_auroc_over_k = 0
+    best_layer_over_k = 0
+    best_scores_over_k = None
+    best_projection_over_k = None
+    for k in tqdm(range(begin_k, k_span)):
+        best_auroc = 0
+        best_layer = 0
+        best_scores = None
+        mean_recorded = None
+        best_projection = None
+        for layer in range(len(embed_generated_wild[0])):
+            if mean:
+                mean_recorded = embed_generated[:, layer, :].mean(0)
+                centered = embed_generated[:, layer, :] - mean_recorded
+            else:
+                centered = embed_generated[:, layer, :]
+
+            if not svd:
+                pca_model = IncrementalPCA(n_components=k, whiten=False, batch_size=10).fit(centered)
+                projection = pca_model.components_.T
+                mean_recorded = pca_model.mean_
+                if weight:
+                    projection = pca_model.singular_values_ * projection
+            else:
+                _, sin_value, V_p = torch.linalg.svd(torch.from_numpy(centered).cuda())
+                sin_value = sin_value.cpu().data.numpy()
+                projection = V_p[:k, :].T.cpu().data.numpy()
+                if weight:
+                    projection = sin_value[:k] * projection
+
+
+            scores = np.mean(np.matmul(centered, projection), -1, keepdims=True)
+            assert scores.shape[1] == 1
+            scores = np.sqrt(np.sum(np.square(scores), axis=1))
+
+            # not sure about whether true and false data the direction will point to,
+            # so we test both. similar practices are in the representation engineering paper
+            # https://arxiv.org/abs/2310.01405
+            measures1 = get_measures(scores[gt_label == 1],
+                                        scores[gt_label == 0], plot=False)
+            measures2 = get_measures(-scores[gt_label == 1],
+                                        -scores[gt_label == 0], plot=False)
+
+            if measures1[0] > measures2[0]:
+                measures = measures1
+                sign_layer = 1
+            else:
+                measures = measures2
+                sign_layer = -1
+
+            if measures[0] > best_auroc:
+                best_auroc = measures[0]
+                best_result = [100 * measures[2], 100 * measures[0]]
+                best_layer = layer
+                best_scores = sign_layer * scores
+                best_projection = projection
+                best_mean = mean_recorded
+                best_sign = sign_layer
+        print('k: ', k, 'best result: ', best_result, 'layer: ', best_layer,
+                'mean: ', mean, 'svd: ', svd)
+
+        if best_auroc > best_auroc_over_k:
+            best_auroc_over_k = best_auroc
+            best_result_over_k = best_result
+            best_layer_over_k = best_layer
+            best_k = k
+            best_sign_over_k = best_sign
+            best_scores_over_k = best_scores
+            best_projection_over_k = best_projection
+            best_mean_over_k = best_mean
+
+
+    return {'k': best_k,
+            'best_layer':best_layer_over_k,
+            'best_auroc':best_auroc_over_k,
+            'best_result':best_result_over_k,
+            'best_scores':best_scores_over_k,
+            'best_mean': best_mean_over_k,
+            'best_sign':best_sign_over_k,
+            'best_projection':best_projection_over_k}
+
+def perform_pca_and_calculate_scores(embed_generated_wild, returned_results, args):
+        """
+        Perform PCA on the wild set and calculate scores.
+        
+        Parameters:
+        - embed_generated_wild: Sliced feature embeddings for the wild set.
+        - returned_results: A dictionary containing the best hyperparameters.
+        - args: Command line arguments containing weighted SVD information.
+        
+        Returns:
+        - best_scores: The calculated scores.
+        """
+        pca_model = IncrementalPCA(n_components=returned_results['k'], whiten=False, batch_size=10).fit(embed_generated_wild[:,returned_results['best_layer'],:])
+        projection = pca_model.components_.T
+        if args.weighted_svd:
+            projection = pca_model.singular_values_ * projection
+        scores = np.mean(np.matmul(embed_generated_wild[:,returned_results['best_layer'],:], projection), -1, keepdims=True)
+        best_scores = np.sqrt(np.sum(np.square(scores), axis=1)) * returned_results['best_sign']
+        return best_scores, projection
+
+# Get the split and labels for unlabeled and test data
+def get_split_and_labels(args):
+    if args.use_rouge:
+        gts = np.load(f'./ml_{args.dataset_name}_rouge_score.npy')
+        gts_bg = np.load(f'./bg_{args.dataset_name}_rouge_score.npy')
+    else:
+        gts = np.load(f'./ml_{args.dataset_name}_bleurt_score.npy')
+    thres = args.thres_gt
+    gt_label = np.asarray(gts > thres, dtype=np.int32)  # if gts > threshold, then this sample is considered as correct
+    return gt_label
+
+def generate_label(args, wild_q_indices, index_dict, dataset):
+    gt_label = get_split_and_labels(args) # Labeling based on the similarity of answers
+    length = len(index_dict['used_indices']) if args.dataset_name == 'tydiqa' else len(dataset)
+
+    # exclude validation samples.
+    wild_q_indices1 = wild_q_indices[:len(wild_q_indices) - 100]
+    wild_q_indices2 = wild_q_indices[len(wild_q_indices) - 100:]
+    gt_label_test = []
+    gt_label_wild = []
+    gt_label_val = []
+    for i in range(length):
+        if i not in wild_q_indices:
+            gt_label_test.extend(gt_label[i: i+1])
+        elif i in wild_q_indices1:
+            gt_label_wild.extend(gt_label[i: i+1])
+        else:
+            gt_label_val.extend(gt_label[i: i+1])
+    gt_label_test = np.asarray(gt_label_test)
+    gt_label_wild = np.asarray(gt_label_wild)
+    gt_label_val = np.asarray(gt_label_val)
+
+    return gt_label_test, gt_label_wild, gt_label_val
+
+def evaluate_auroc(embed_generated_wild, best_scores, embed_generated_test, gt_label_test):
+    thresholds = np.linspace(0,1, num=40)[1:-1]
+    normalizer = lambda x: x / (np.linalg.norm(x, ord=2, axis=-1, keepdims=True) + 1e-10)
+    auroc_over_thres = []
+    for thres_wild in thresholds:
+        best_auroc = 0
+        for layer in range(len(embed_generated_wild[0])):
+            thres_wild_score = np.sort(best_scores)[int(len(best_scores) * thres_wild)]
+            true_wild = embed_generated_wild[:,layer,:][best_scores > thres_wild_score]
+            false_wild = embed_generated_wild[:,layer,:][best_scores <= thres_wild_score]
+
+            embed_train = np.concatenate([true_wild,false_wild],0)
+            label_train = np.concatenate([np.ones(len(true_wild)),
+                                            np.zeros(len(false_wild))], 0)
+
+            ## gt training, saplma
+            # embed_train = embed_generated_wild[:,layer,:]
+            # label_train = gt_label_wild
+            ## gt training, saplma
+            from linear_probe import get_linear_acc
+
+            best_acc, final_acc, (
+            clf, best_state, best_preds, preds, labels_val), losses_train = get_linear_acc(
+            embed_train,
+            label_train,
+            embed_train,
+            label_train,
+            2, epochs = 50,
+            print_ret = True,
+            batch_size=512,
+            cosine=True,
+            nonlinear = True,
+            learning_rate = 0.05,
+            weight_decay = 0.0003)
+
+            clf.eval()
+            output = clf(torch.from_numpy(
+                embed_generated_test[:, layer, :]).cuda())
+            pca_wild_score_binary_cls = torch.sigmoid(output)
+
+
+            pca_wild_score_binary_cls = pca_wild_score_binary_cls.cpu().data.numpy()
+
+            if np.isnan(pca_wild_score_binary_cls).sum() > 0:
+                breakpoint()
+            measures = get_measures(pca_wild_score_binary_cls[gt_label_test == 1],
+                                    pca_wild_score_binary_cls[gt_label_test == 0], plot=False)
+
+            if measures[0] > best_auroc:
+                best_auroc = measures[0]
+                best_result = [100 * measures[0]]
+                best_layer = layer
+
+        auroc_over_thres.append(best_auroc)
+        print('thres: ', thres_wild, 'best result: ', best_result, 'best_layer: ', best_layer)
+
+def create_answers_path(args):
+    if not os.path.exists(f'./save_for_eval/{args.dataset_name}_hal_det/'):
+        os.mkdir(f'./save_for_eval/{args.dataset_name}_hal_det/')
+
+    if not os.path.exists(f'./save_for_eval/{args.dataset_name}_hal_det/answers'):
+        os.mkdir(f'./save_for_eval/{args.dataset_name}_hal_det/answers')
+
+def load_bleurt_model_and_tokenizer(args):
+    """
+    Loads the BLEURT model and tokenizer from the specified pre-trained model name.
+
+    Args:
+    model_name (str): The name of the pre-trained BLEURT model.
+
+    Returns:
+    model (BleurtForSequenceClassification): The loaded BLEURT model.
+    tokenizer (BleurtTokenizer): The BLEURT tokenizer.
+    """
+    model = BleurtForSequenceClassification.from_pretrained(args.bleurt_model).cuda()
+    tokenizer = BleurtTokenizer.from_pretrained(args.bleurt_model)
+    model.eval()
+    return model, tokenizer
+
+def process_and_save_answer(args, decoded, answers):
+    if args.dataset_name in ['tqa', 'triviaqa']:
+        if 'Answer the question concisely' in decoded:
+            decoded = decoded.split('Answer the question concisely')[0]
+    if args.dataset_name == 'coqa':
+        if 'Q:' in decoded:
+            decoded = decoded.split('Q:')[0]
+    answers.append(decoded)
+
+ # Slice the feature embeddings based on the selected indices and feat_loc
+def slice_feature_embeddings(embed_generated, feat_indices_wild, feat_indices_eval, feat_loc):
+    """
+    Slice the feature embeddings for wild and eval sets based on the feature location.
+    
+    Parameters:
+    - embed_generated: The loaded feature embeddings.
+    - feat_indices_wild: Indices for the wild set.
+    - feat_indices_eval: Indices for the eval set.
+    - feat_loc: The location of the feature embeddings.
+    
+    Returns:
+    - embed_generated_wild: Sliced feature embeddings for the wild set.
+    - embed_generated_eval: Sliced feature embeddings for the eval set.
+    """
+    if feat_loc == 3:
+        embed_generated_wild = embed_generated[feat_indices_wild][:,1:,:]
+        embed_generated_eval = embed_generated[feat_indices_eval][:, 1:, :]
+    else:
+        embed_generated_wild = embed_generated[feat_indices_wild]
+        embed_generated_eval = embed_generated[feat_indices_eval]
+    return embed_generated_wild, embed_generated_eval
+
+# Select feature indices based on the provided indices lists
+def select_feature_indices(wild_q_indices1, wild_q_indices2, length):
+    """
+    Select feature indices for wild and eval sets.
+    
+    Parameters:
+    - self_model: The model instance containing model-related attributes.
+    - wild_q_indices1: Indices for the first wild set.
+    - wild_q_indices2: Indices for the second wild set.
+    
+    Returns:
+    - feat_indices_wild: Indices for the wild set.
+    - feat_indices_eval: Indices for the eval set.
+    """
+    feat_indices_wild = []
+    feat_indices_eval = []
+    for i in range(length):
+        if i in wild_q_indices1:
+            feat_indices_wild.extend(np.arange(i, i+1).tolist())
+        elif i in wild_q_indices2:
+            feat_indices_eval.extend(np.arange(i, i + 1).tolist())
+    return feat_indices_wild, feat_indices_eval
+
+# Load the feature embeddings based on the location specified by feat_loc
+def load_feature_embeddings(args):
+    """
+    Load the feature embeddings from a file based on the feature location.
+    
+    Parameters:
+    - args: Command line arguments containing dataset and model information.
+    - self.model: The model instance containing model-related attributes.
+    
+    Returns:
+    - embed_generated: The loaded feature embeddings.
+    """
+    feat_loc = args.feat_loc_svd
+    if args.most_likely:
+        if feat_loc == 3:
+            embed_generated = np.load(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_layer_wise.npy', allow_pickle=True)
+        elif feat_loc == 2:
+            embed_generated = np.load(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_mlp_wise.npy', allow_pickle=True)
+        else:
+            embed_generated = np.load(f'save_for_eval/{args.dataset_name}_hal_det/most_likely_{args.model_name}_gene_embeddings_head_wise.npy', allow_pickle=True)
+    return embed_generated
