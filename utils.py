@@ -1054,8 +1054,8 @@ def generate_label(args, wild_q_indices, index_dict, dataset):
     length = len(index_dict['used_indices']) if args.dataset_name == 'tydiqa' else len(dataset)
 
     # exclude validation samples.
-    wild_q_indices1 = wild_q_indices[:len(wild_q_indices) - 100]
-    wild_q_indices2 = wild_q_indices[len(wild_q_indices) - 100:]
+    wild_q_indices1 = wild_q_indices[:len(wild_q_indices) - 200]
+    wild_q_indices2 = wild_q_indices[len(wild_q_indices) - 200:]
     gt_label_test = []
     gt_label_wild = []
     gt_label_val = []
