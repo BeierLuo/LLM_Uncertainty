@@ -193,6 +193,7 @@ class HaloScope(BaseEstimator):
         returned_results = svd_embed_score(embed_generated_eval, gt_label_val, 1, 11, mean=0, svd=0,
                                            weight=args.weighted_svd) # get the best numbers of principal components
         best_scores, projection = perform_pca_and_calculate_scores(embed_generated_wild, returned_results, args)
+        print(returned_results)
 
         # Direct projection on test set
         print('============Directly Project on Test Set=============')
@@ -269,4 +270,4 @@ class HaloScope(BaseEstimator):
                     best_layer = layer
 
             auroc_over_thres.append(best_auroc)
-            print('thres: ', thres_wild, 'best result: ', best_result, 'best_layer: ', best_layer)
+            print('thres: ', thres_wild, 'best result: ', best_auroc, 'best_layer: ', best_layer)
