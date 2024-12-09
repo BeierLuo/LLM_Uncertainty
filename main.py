@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--dataset_name', type=str, default='tqa')
     parser.add_argument('--estimator_name', type=str, default='haloscope')
     parser.add_argument('--bleurt_model', type=str, default='lucadiliello/BLEURT-20-D12')
+    parser.add_argument('--output_dir', type=str, default='/data/home/beier/output')
     parser.add_argument('--num_gene', type=int, default=1)
     parser.add_argument('--gene', type=int, default=0)
     parser.add_argument('--generate_gt', type=int, default=0)
