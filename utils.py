@@ -995,7 +995,7 @@ def svd_embed_score(embed_generated_wild, gt_label, begin_k, k_span, mean=1, svd
                 best_projection = projection
                 best_mean = mean_recorded
                 best_sign = sign_layer
-        print('k: ', k, 'best result: ', best_result, 'layer: ', best_layer,
+        print('k: ', k, 'best result: ', best_result, 'best auroc: ', best_auroc, 'layer: ', best_layer,
                 'mean: ', mean, 'svd: ', svd)
 
         if best_auroc > best_auroc_over_k:
@@ -1071,62 +1071,6 @@ def generate_label(args, wild_q_indices, index_dict, dataset):
     gt_label_val = np.asarray(gt_label_val)
 
     return gt_label_test, gt_label_wild, gt_label_val
-
-def evaluate_auroc(embed_generated_wild, best_scores, embed_generated_test, gt_label_test):
-    thresholds = np.linspace(0,1, num=40)[1:-1]
-    normalizer = lambda x: x / (np.linalg.norm(x, ord=2, axis=-1, keepdims=True) + 1e-10)
-    auroc_over_thres = []
-    for thres_wild in thresholds:
-        best_auroc = 0
-        for layer in range(len(embed_generated_wild[0])):
-            thres_wild_score = np.sort(best_scores)[int(len(best_scores) * thres_wild)]
-            true_wild = embed_generated_wild[:,layer,:][best_scores > thres_wild_score]
-            false_wild = embed_generated_wild[:,layer,:][best_scores <= thres_wild_score]
-
-            embed_train = np.concatenate([true_wild,false_wild],0)
-            label_train = np.concatenate([np.ones(len(true_wild)),
-                                            np.zeros(len(false_wild))], 0)
-
-            ## gt training, saplma
-            # embed_train = embed_generated_wild[:,layer,:]
-            # label_train = gt_label_wild
-            ## gt training, saplma
-            from linear_probe import get_linear_acc
-
-            best_acc, final_acc, (
-            clf, best_state, best_preds, preds, labels_val), losses_train = get_linear_acc(
-            embed_train,
-            label_train,
-            embed_train,
-            label_train,
-            2, epochs = 50,
-            print_ret = True,
-            batch_size=512,
-            cosine=True,
-            nonlinear = True,
-            learning_rate = 0.05,
-            weight_decay = 0.0003)
-
-            clf.eval()
-            output = clf(torch.from_numpy(
-                embed_generated_test[:, layer, :]).cuda())
-            pca_wild_score_binary_cls = torch.sigmoid(output)
-
-
-            pca_wild_score_binary_cls = pca_wild_score_binary_cls.cpu().data.numpy()
-
-            if np.isnan(pca_wild_score_binary_cls).sum() > 0:
-                breakpoint()
-            measures = get_measures(pca_wild_score_binary_cls[gt_label_test == 1],
-                                    pca_wild_score_binary_cls[gt_label_test == 0], plot=False)
-
-            if measures[0] > best_auroc:
-                best_auroc = measures[0]
-                best_result = [100 * measures[0]]
-                best_layer = layer
-
-        auroc_over_thres.append(best_auroc)
-        print('thres: ', thres_wild, 'best result: ', best_result, 'best_layer: ', best_layer)
 
 def create_answers_path(args):
     if not os.path.exists(f'./save_for_eval/{args.dataset_name}_hal_det/'):

@@ -1,16 +1,8 @@
-from .base_estimator import Base_Estimator
-import os
-from tqdm import tqdm
-import numpy as np
-import numpy as np
+from .base_estimator import BaseEstimator
 from evaluate import load
-import torch
-from metric_utils import get_measures, print_measures
 from utils import *
-from sklearn.decomposition import PCA, IncrementalPCA
-import pdb
 
-class HaloScope(Base_Estimator):
+class HaloScope(BaseEstimator):
     def __init__(self, args, dataset, index_dict):
         super().__init__(args, dataset, index_dict)
         
@@ -86,14 +78,7 @@ class HaloScope(Base_Estimator):
         elif args.dataset_name == 'tydiqa':
             all_answers = self.dataset[int(self.index_dict['used_indices'][i])]['answers']['text']
         return all_answers
-    
-    def load_model_answers(self, args, i):
-        if args.most_likely:
-            file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
-        else:
-            file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/batch_generations_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
-        return np.load(file_path, allow_pickle=True)
-    
+
     # Evaluate answers using ROUGE
     def evaluate_with_rouge(self, rouge, predictions, all_answers):
         all_results = np.zeros((len(all_answers), len(predictions)))
@@ -125,8 +110,11 @@ class HaloScope(Base_Estimator):
 
         for i in range(self.length):
             all_answers = self.get_ground_truth_answers(args, i)
-            
-            answers = self.load_model_answers(args, i)
+            if args.most_likely:
+                file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
+            else:
+                file_path = f'./save_for_eval/{args.dataset_name}_hal_det/answers/batch_generations_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy'
+            answers = np.load(file_path, allow_pickle=True)
 
             if args.use_rouge:
                 gts = np.concatenate([gts, self.evaluate_with_rouge(rouge, answers, all_answers)], 0)
@@ -144,13 +132,6 @@ class HaloScope(Base_Estimator):
             f'./bg_{args.dataset_name}_bleurt_score.npy'
 
         np.save(save_path, gts)
-    
-    def get_hidden_states(self, prompt):
-        with torch.no_grad():
-            hidden_states = self.model(prompt, output_hidden_states=True).hidden_states
-            hidden_states = torch.stack(hidden_states, dim=0).squeeze()
-            hidden_states = hidden_states.detach().cpu().numpy()[:, -1, :]
-        return hidden_states
 
     def save_embeddings(self, embeddings, filename):
         embeddings = np.asarray(np.stack(embeddings), dtype=np.float32)
@@ -167,7 +148,10 @@ class HaloScope(Base_Estimator):
             answers = np.load(f'save_for_eval/{args.dataset_name}_hal_det/answers/most_likely_hal_det_{args.model_name}_{args.dataset_name}_answers_index_{i}.npy')
             for anw in answers:
                 prompt = self.build_decoded_prompt(args, i, anw)
-                hidden_states = self.get_hidden_states(prompt)
+                with torch.no_grad():
+                    hidden_states = self.model(prompt, output_hidden_states=True).hidden_states
+                    hidden_states = torch.stack(hidden_states, dim=0).squeeze()
+                    hidden_states = hidden_states.detach().cpu().numpy()[:, -1, :]
                 embed_generated.append(hidden_states)
 
                 with torch.no_grad():
@@ -194,22 +178,29 @@ class HaloScope(Base_Estimator):
             self.get_embeddings(args)
 
         permuted_index = np.random.permutation(self.length)
-        wild_q_indices = permuted_index[:int(args.wild_ratio * self.length)] # Divide the wild dataset (i.e. unlabeled dataset)
-        wild_q_indices1 = wild_q_indices[:len(wild_q_indices) - 100] # unlabel dataset
-        wild_q_indices2 = wild_q_indices[len(wild_q_indices) - 100:] # validation dataset
-        gt_label_test, gt_label_wild, gt_label_val = generate_label(args, wild_q_indices, self.index_dict, self.dataset) # get the gt of each dataset
+
+        # Divide the wild dataset (i.e. unlabeled dataset)
+        wild_q_indices = permuted_index[:int(args.wild_ratio * self.length)]
+        wild_q_indices1 = wild_q_indices[:len(wild_q_indices) - 100]  # unlabeled dataset
+        wild_q_indices2 = wild_q_indices[len(wild_q_indices) - 100:]  # validation dataset
+        # get the gt of each dataset
+        gt_label_test, gt_label_wild, gt_label_val = generate_label(args, wild_q_indices, self.index_dict, self.dataset)
 
         embed_generated = load_feature_embeddings(args)
         feat_indices_wild, feat_indices_eval = select_feature_indices(wild_q_indices1, wild_q_indices2, self.length)
-        embed_generated_wild, embed_generated_eval = slice_feature_embeddings(embed_generated, feat_indices_wild, feat_indices_eval, args.feat_loc_svd)
-        returned_results = svd_embed_score(embed_generated_eval, gt_label_val, 1, 11, mean=0, svd=0, weight=args.weighted_svd) # get the best numbers of principal components 
+        embed_generated_wild, embed_generated_eval = slice_feature_embeddings(embed_generated, feat_indices_wild,
+                                                                              feat_indices_eval, args.feat_loc_svd)
+        returned_results = svd_embed_score(embed_generated_eval, gt_label_val, 1, 11, mean=0, svd=0,
+                                           weight=args.weighted_svd) # get the best numbers of principal components
         best_scores, projection = perform_pca_and_calculate_scores(embed_generated_wild, returned_results, args)
-    
+
         # Direct projection on test set
+        print('============Directly Project on Test Set=============')
         feat_indices_test = []
         for i in range(self.length):
             if i not in wild_q_indices:
-                feat_indices_test.extend(np.arange(1 * i, 1 * i + 1).tolist())
+                feat_indices = np.arange(1 * i, 1 * i + 1).tolist()
+                feat_indices_test.extend(feat_indices)
         if args.feat_loc_svd == 3:
             embed_generated_test = embed_generated[feat_indices_test][:, 1:, :]
         else:
@@ -225,8 +216,57 @@ class HaloScope(Base_Estimator):
                                  returned_results['best_sign'] *test_scores[gt_label_test == 0], plot=False)
         print_measures(measures[0], measures[1], measures[2], 'direct-projection')
 
-        evaluate_auroc(embed_generated_wild, best_scores, embed_generated_test, gt_label_test)
+        print('============Linear Probe=============')
+        thresholds = np.linspace(0, 1, num=40)[1:-1]
+        normalizer = lambda x: x / (np.linalg.norm(x, ord=2, axis=-1, keepdims=True) + 1e-10)
+        auroc_over_thres = []
+        for thres_wild in thresholds:
+            best_auroc = 0
+            for layer in range(len(embed_generated_wild[0])):
+                thres_wild_score = np.sort(best_scores)[int(len(best_scores) * thres_wild)]
+                true_wild = embed_generated_wild[:, layer, :][best_scores > thres_wild_score]
+                false_wild = embed_generated_wild[:, layer, :][best_scores <= thres_wild_score]
 
+                embed_train = np.concatenate([true_wild, false_wild], 0)
+                label_train = np.concatenate([np.ones(len(true_wild)),
+                                              np.zeros(len(false_wild))], 0)
 
+                ## gt training, saplma
+                # embed_train = embed_generated_wild[:,layer,:]
+                # label_train = gt_label_wild
+                ## gt training, saplma
+                from linear_probe import get_linear_acc
 
-    
+                best_acc, final_acc, (
+                    clf, best_state, best_preds, preds, labels_val), losses_train = get_linear_acc(
+                    embed_train,
+                    label_train,
+                    embed_train,
+                    label_train,
+                    2, epochs=50,
+                    print_ret=True,
+                    batch_size=512,
+                    cosine=True,
+                    nonlinear=True,
+                    learning_rate=0.05,
+                    weight_decay=0.0003)
+
+                clf.eval()
+                output = clf(torch.from_numpy(
+                    embed_generated_test[:, layer, :]).cuda())
+                pca_wild_score_binary_cls = torch.sigmoid(output)
+
+                pca_wild_score_binary_cls = pca_wild_score_binary_cls.cpu().data.numpy()
+
+                if np.isnan(pca_wild_score_binary_cls).sum() > 0:
+                    breakpoint()
+                measures = get_measures(pca_wild_score_binary_cls[gt_label_test == 1],
+                                        pca_wild_score_binary_cls[gt_label_test == 0], plot=False)
+
+                if measures[0] > best_auroc:
+                    best_auroc = measures[0]
+                    best_result = [100 * measures[0]]
+                    best_layer = layer
+
+            auroc_over_thres.append(best_auroc)
+            print('thres: ', thres_wild, 'best result: ', best_result, 'best_layer: ', best_layer)

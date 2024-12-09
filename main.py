@@ -49,7 +49,7 @@ def main():
     estimator = get_estimator(args, dataset, index_dict)
 
     if args.gene:
-        estimator.generate(args)
+        estimator.generate(args)  # generate answers for datasets
     elif args.generate_gt:
         estimator.evaluate_answers(args)
     else:

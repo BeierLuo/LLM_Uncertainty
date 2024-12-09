@@ -1,3 +1,4 @@
 *.npy
 __pycache__/
 save_for_eval/
+.idea/

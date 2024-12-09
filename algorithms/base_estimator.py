@@ -12,7 +12,7 @@ HF_NAMES = {
     'llama2_chat_70B': 'meta-llama/Llama-2-70b-chat-hf',
 }
 
-class Base_Estimator(ABC):
+class BaseEstimator(ABC):
     def __init__(self, args, dataset, index_dict):
         super().__init__()
         self.MODEL = HF_NAMES[args.model_name] if not args.model_dir else args.model_dir
@@ -22,11 +22,3 @@ class Base_Estimator(ABC):
         self.dataset = dataset
         self.index_dict = index_dict
         self.length = len(self.index_dict['used_indices']) if args.dataset_name == 'tydiqa' else len(dataset)
-    
-    def generate(self):
-        pass
-
-    def generate_gt(self):
-        pass
-
-
